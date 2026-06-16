@@ -137,6 +137,26 @@
 #define ICM426XX_INTF_CONFIG5_PIN9_FUNCTION_MASK    (3 << 1)   // PIN9 mode config
 #define ICM426XX_INTF_CONFIG5_PIN9_FUNCTION_CLKIN   (2 << 1)   // PIN9 as CLKIN
 
+// HXY (Silan) config
+#define SL_ICM42688P_RA_WHO_AM_I        0x01
+#define SL_ICM42688P_WHO_AM_I_CONST     0x6A
+
+#define SL_ICM42688P_RA_COM_CFG         0x05
+#define SL_ICM42688P_RA_DLPF_CFG        0x08
+#define SL_ICM42688P_RA_STATUS          0x0B
+#define SL_ICM42688P_RA_ACCEL_DATA_X_H  0x0C
+#define SL_ICM42688P_RA_GYRO_DATA_X_H   0x12
+
+#define SL_ICM42688P_RA_ACC_CONF        0x40
+#define SL_ICM42688P_RA_ACC_RANGE       0x41
+#define SL_ICM42688P_RA_GYR_CONF        0x42
+#define SL_ICM42688P_RA_GYR_RANGE       0x43
+#define SL_ICM42688P_RA_SOFT_RESET      0x4A
+#define SL_ICM42688P_RA_PWR_CTRL        0x7D
+#define SL_ICM42688P_RA_BANK_SEL        0x7F
+
+static bool slIcm42688pDetected = false;
+
 typedef enum {
     ODR_CONFIG_8K = 0,
     ODR_CONFIG_4K,
@@ -260,12 +280,26 @@ static void icm426xxSoftReset(const extDevice_t *dev)
 
 uint8_t icm426xxSpiDetect(const extDevice_t *dev)
 {
-    delay(1);                          // power-on time
+    delay(1); // power-on time
+
+    slIcm42688pDetected = false;
+
+    // First check HXY/Silan clone before doing normal ICM426xx reset.
+    spiWriteReg(dev, SL_ICM42688P_RA_BANK_SEL, 0x00);
+    delay(1);
+
+    const uint8_t slWhoAmI = spiReadRegMsk(dev, SL_ICM42688P_RA_WHO_AM_I);
+    if (slWhoAmI == SL_ICM42688P_WHO_AM_I_CONST) {
+        slIcm42688pDetected = true;
+        return ICM_42688P_SPI;
+    }
+    // Normal TDK/InvenSense ICM426xx path.
     icm426xxSoftReset(dev);
     spiWriteReg(dev, ICM426XX_RA_PWR_MGMT0, 0x00);
 
     uint8_t icmDetected = MPU_NONE;
     uint8_t attemptsRemaining = 20;
+
     do {
         delay(1);
         const uint8_t whoAmI = spiReadRegMsk(dev, MPU_RA_WHO_AM_I);
@@ -292,20 +326,22 @@ uint8_t icm426xxSpiDetect(const extDevice_t *dev)
             icmDetected = MPU_NONE;
             break;
         }
+
         if (icmDetected != MPU_NONE) {
             break;
         }
+
         if (!attemptsRemaining) {
             return MPU_NONE;
         }
     } while (attemptsRemaining--);
 
 #if defined(USE_GYRO_CLKIN)
-    // IIM42652/53 also support external clock but it's not currently tested and may require different handling, so only enable for 42688P for now.
+    // IIM42652/53 also support external clock but it's not currently tested and may require different handling,
+    // so only enable for original 42688P for now.
     if (icmDetected == ICM_42688P_SPI) {
         icm426xxEnableExternalClock(dev);
     }
-
 #endif
 
     return icmDetected;
@@ -313,6 +349,13 @@ uint8_t icm426xxSpiDetect(const extDevice_t *dev)
 
 void icm426xxAccInit(accDev_t *acc)
 {
+
+    if (acc->mpuDetectionResult.sensor == ICM_42688P_SPI && slIcm42688pDetected) {
+        acc->acc_1G = 8192;
+        return;
+    }
+
+
     switch (acc->mpuDetectionResult.sensor) {
     case IIM_42653_SPI:
 #if ENABLE_42686_EXTENDED_RANGE
@@ -364,8 +407,60 @@ static void turnGyroAccOn(const extDevice_t *dev)
     delay(1);
 }
 
+static void slIcm42688pGyroInit(gyroDev_t *gyro)
+{
+    const extDevice_t *dev = &gyro->dev;
+
+    spiSetClkDivisor(dev, spiCalculateDivider(8000000));
+
+    mpuGyroInit(gyro);
+
+    gyro->accDataReg = SL_ICM42688P_RA_ACCEL_DATA_X_H;
+    gyro->gyroDataReg = SL_ICM42688P_RA_GYRO_DATA_X_H;
+    gyro->tempDataReg = 0x00;
+    gyro->dmaReadRegStart = gyro->gyroDataReg;
+
+    spiWriteReg(dev, SL_ICM42688P_RA_BANK_SEL, 0x00);
+    delay(20);
+
+    spiWriteReg(dev, SL_ICM42688P_RA_PWR_CTRL, 0x00);
+    delay(200);
+
+    spiWriteReg(dev, SL_ICM42688P_RA_BANK_SEL, 0x00);
+    delay(20);
+
+    spiWriteReg(dev, SL_ICM42688P_RA_DLPF_CFG, 0x87);
+    delay(10);
+
+    spiWriteReg(dev, SL_ICM42688P_RA_COM_CFG, 0x80);
+    spiWriteReg(dev, SL_ICM42688P_RA_SOFT_RESET, 0xA5);
+    delay(200);
+
+    spiWriteReg(dev, SL_ICM42688P_RA_BANK_SEL, 0x00);
+    delay(1);
+
+    spiWriteReg(dev, SL_ICM42688P_RA_PWR_CTRL, 0x0E);
+    delay(200);
+
+    spiWriteReg(dev, SL_ICM42688P_RA_ACC_CONF, 0x88);
+    spiWriteReg(dev, SL_ICM42688P_RA_ACC_RANGE, 0x01);
+
+    spiWriteReg(dev, SL_ICM42688P_RA_GYR_CONF, 0xC8);
+    spiWriteReg(dev, SL_ICM42688P_RA_GYR_RANGE, 0x00);
+
+    spiWriteReg(dev, SL_ICM42688P_RA_COM_CFG, 0x50);
+    spiWriteReg(dev, SL_ICM42688P_RA_DLPF_CFG, 0x05);
+
+    delay(20);
+}
+
 void icm426xxGyroInit(gyroDev_t *gyro)
 {
+
+    if (gyro->mpuDetectionResult.sensor == ICM_42688P_SPI && slIcm42688pDetected) {
+        slIcm42688pGyroInit(gyro);
+        return;
+    }
     const extDevice_t *dev = &gyro->dev;
 
     spiSetClkDivisor(dev, spiCalculateDivider(ICM426XX_MAX_SPI_CLK_HZ));

@@ -350,27 +350,44 @@ uint8_t icm426xxSpiDetect(const extDevice_t *dev)
 void icm426xxAccInit(accDev_t *acc)
 {
 
-    if (acc->mpuDetectionResult.sensor == ICM_42688P_SPI && slIcm42688pDetected) {
-        acc->acc_1G = 8192;
-        return;
-    }
-
-
     switch (acc->mpuDetectionResult.sensor) {
     case IIM_42653_SPI:
 #if ENABLE_42686_EXTENDED_RANGE
     case ICM_42686P_SPI:
 #endif
-        acc->acc_1G = 512 * 2; // Accel scale 32g (1024 LSB/g)
+        acc->acc_1G = 512 * 2;
         break;
 #if !ENABLE_42686_EXTENDED_RANGE
     case ICM_42686P_SPI:
 #endif
     case IIM_42652_SPI:
     default:
-        acc->acc_1G = 512 * 4; // Accel scale 16g (2048 LSB/g)
+        acc->acc_1G = 512 * 4;
         break;
     }
+}
+
+
+static bool slIcm42688pAccReadSlow(accDev_t *acc)
+{
+    const extDevice_t *dev = &acc->gyro->dev;
+
+    const uint8_t axh = spiReadRegMsk(dev, 0x0C);
+    const uint8_t axl = spiReadRegMsk(dev, 0x0D);
+    const uint8_t ayh = spiReadRegMsk(dev, 0x0E);
+    const uint8_t ayl = spiReadRegMsk(dev, 0x0F);
+    const uint8_t azh = spiReadRegMsk(dev, 0x10);
+    const uint8_t azl = spiReadRegMsk(dev, 0x11);
+
+    const int16_t rawX = (int16_t)((axh << 8) | axl);
+    const int16_t rawY = (int16_t)((ayh << 8) | ayl);
+    const int16_t rawZ = (int16_t)((azh << 8) | azl);
+
+    acc->ADCRaw[X] = rawX >> 2;
+    acc->ADCRaw[Y] = rawY >> 2;
+    acc->ADCRaw[Z] = rawZ >> 2;
+
+    return true;
 }
 
 bool icm426xxSpiAccDetect(accDev_t *acc)
@@ -388,8 +405,7 @@ bool icm426xxSpiAccDetect(accDev_t *acc)
     }
 
     acc->initFn = icm426xxAccInit;
-    acc->readFn = mpuAccReadSPI;
-
+    acc->readFn = slIcm42688pAccReadSlow;
     return true;
 }
 

@@ -349,6 +349,10 @@ uint8_t icm426xxSpiDetect(const extDevice_t *dev)
 
 void icm426xxAccInit(accDev_t *acc)
 {
+    if (acc->mpuDetectionResult.sensor == ICM_42688P_SPI && slIcm42688pDetected) {
+        acc->acc_1G = 512 * 4; // 2048 LSB/g
+        return;
+    }
 
     switch (acc->mpuDetectionResult.sensor) {
     case IIM_42653_SPI:
@@ -357,6 +361,7 @@ void icm426xxAccInit(accDev_t *acc)
 #endif
         acc->acc_1G = 512 * 2;
         break;
+
 #if !ENABLE_42686_EXTENDED_RANGE
     case ICM_42686P_SPI:
 #endif
@@ -405,7 +410,12 @@ bool icm426xxSpiAccDetect(accDev_t *acc)
     }
 
     acc->initFn = icm426xxAccInit;
-    acc->readFn = slIcm42688pAccReadSlow;
+    if (slIcm42688pDetected) {
+        acc->readFn = slIcm42688pAccReadSlow;
+    } else {
+        acc->readFn = mpuAccReadSPI;
+    }
+
     return true;
 }
 

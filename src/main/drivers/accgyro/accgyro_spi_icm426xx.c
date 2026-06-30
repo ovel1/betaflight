@@ -471,7 +471,7 @@ static void slIcm42688pGyroInit(gyroDev_t *gyro)
     spiWriteReg(dev, SL_ICM42688P_RA_ACC_CONF, 0x88);
     spiWriteReg(dev, SL_ICM42688P_RA_ACC_RANGE, 0x01);
 
-    spiWriteReg(dev, SL_ICM42688P_RA_GYR_CONF, 0xC8);
+    spiWriteReg(dev, SL_ICM42688P_RA_GYR_CONF, 0xCC);
     spiWriteReg(dev, SL_ICM42688P_RA_GYR_RANGE, 0x00);
 
     spiWriteReg(dev, SL_ICM42688P_RA_COM_CFG, 0x50);
